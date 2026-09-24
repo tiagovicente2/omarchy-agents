@@ -16,25 +16,9 @@ Multi-agent AI coding subscription monitor, token usage fuel gauges, and pacing 
 
 ## Installation
 
-### From Monorepo (Dotfiles)
-
-Managed automatically via the Omarchy package installer:
-
 ```bash
-install-omarchy-plugins
-```
-
-### Manual Installation
-
-```bash
-# 1. Link the plugin into Omarchy
-ln -sfn ~/Projects/omarchy-plugins/plugins/omarchy-agents ~/.config/omarchy/plugins/omarchy-agents
-
-# 2. Run the helper to link CLI collectors (e.g. omarchy-agent-usage-agy)
+omarchy plugin add https://github.com/tiagovicente2/omarchy-agents.git --enable
 ~/.config/omarchy/plugins/omarchy-agents/install-helper.sh
-
-# 3. Rescan Omarchy plugins
-omarchy-shell shell rescanPlugins
 ```
 
 ---
