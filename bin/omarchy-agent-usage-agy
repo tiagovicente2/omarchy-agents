@@ -180,16 +180,32 @@ def format_quota_limits(groups: list[dict[str, Any]], quota_mode: str = "both") 
     mode = (quota_mode or "both").strip().lower()
     limits: list[dict[str, Any]] = []
 
-    for g in groups:
+    sorted_groups = sorted(
+        groups,
+        key=lambda g: (
+            0 if "gemini" in str(g.get("name") or "").lower() or "argon" in str(g.get("name") or "").lower() else 1,
+            1 if "argon" in str(g.get("name") or "").lower() else 0,
+        ),
+    )
+
+    for g in sorted_groups:
         gname = str(g.get("name") or "")
-        is_gemini = "gemini" in gname.lower()
+        gname_lower = gname.lower()
+        is_argon = "argon" in gname_lower
+        is_gemini = "gemini" in gname_lower or is_argon
 
         if mode in ("gemini", "google") and not is_gemini:
             continue
         if mode in ("claude", "3p", "other", "gpt") and is_gemini:
             continue
+        if mode == "argon" and not is_argon:
+            continue
 
-        prefix = "Gemini" if is_gemini else ("Claude & GPT" if ("claude" in gname.lower() or "gpt" in gname.lower()) else gname)
+        group_name = (
+            "Gemini"
+            if is_gemini
+            else ("Claude & GPT" if ("claude" in gname_lower or "gpt" in gname_lower) else gname)
+        )
 
         # Sort so 5-hour / session comes first, then weekly
         buckets = sorted(
@@ -206,12 +222,12 @@ def format_quota_limits(groups: list[dict[str, Any]], quota_mode: str = "both") 
             used = round(max(0.0, min(1.0, 1.0 - rem)), 4)
             window = str(b.get("window") or "")
             reset_time = str(b.get("reset_time") or "")
-            if mode in ("gemini", "google") and not is_gemini:
-                continue
-            if mode in ("claude", "3p", "other", "gpt") and is_gemini:
-                continue
+            b_name_lower = str(b.get("name", "")).lower()
+            b_id_lower = str(b.get("id", "")).lower()
+            bucket_is_argon = is_argon or "argon" in b_name_lower or "argon" in b_id_lower
 
-            is_session = window in ("5h", "session", "hour") or "hour" in str(b.get("name", "")).lower()
+            prefix = "Gemini Argon" if bucket_is_argon else group_name
+            is_session = window in ("5h", "session", "hour") or "hour" in b_name_lower
 
             title = f"{prefix} Session" if is_session else f"{prefix} Weekly"
             label = f"{prefix} Session (5-hour)" if is_session else f"{prefix} Weekly (7-day)"
@@ -219,7 +235,7 @@ def format_quota_limits(groups: list[dict[str, Any]], quota_mode: str = "both") 
             limits.append({
                 "label": label,
                 "title": title,
-                "group": prefix,
+                "group": group_name,
                 "percent": used,
                 "resetsAt": reset_time,
             })

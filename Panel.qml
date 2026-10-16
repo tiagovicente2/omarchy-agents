@@ -130,10 +130,12 @@ Panel {
   // titled after its model, and a name like "Opus 5 (1M context)" would parse
   // as a one-minute window.
   function limitWindow(label, percent, resetAt, title) {
+    var reset = new Date(String(resetAt || "")).getTime()
+    var expired = isFinite(reset) && reset <= root.nowMs
     return {
       title: String(title || "") !== "" ? String(title) : windowTitle(label),
-      percent: Number(percent),
-      resetAt: String(resetAt || "")
+      percent: expired ? 0 : Number(percent),
+      resetAt: expired ? "" : String(resetAt || "")
     }
   }
 
@@ -274,7 +276,7 @@ Panel {
     if (!groupName || groupName === "Both" || groupName === "All" || groupName === "") return true
     var id = String(modelId || "").toLowerCase()
     var name = usage.friendlyModelName(modelId).toLowerCase()
-    var isGemini = id.indexOf("gemini") >= 0 || name.indexOf("gemini") >= 0
+    var isGemini = id.indexOf("gemini") >= 0 || name.indexOf("gemini") >= 0 || id.indexOf("argon") >= 0 || name.indexOf("argon") >= 0
     if (groupName === "Gemini") return isGemini
     if (groupName === "Claude & GPT" || groupName === "3p" || groupName === "Claude" || groupName === "GPT") return !isGemini
     return true
@@ -380,7 +382,7 @@ Panel {
     onTriggered: root.nowMs = Date.now()
   }
 
-  IpcHandler {
+  ShellIpc {
     target: root.ipcTarget
     function open(): void { root.open() }
     function close(): void { root.close() }

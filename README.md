@@ -6,7 +6,7 @@ Multi-agent AI coding subscription monitor, token usage fuel gauges, and pacing 
 
 ## Features
 
-- **Multi-Agent Support**: Native rate-limit and token metrics for **Claude Code**, **OpenAI Codex**, **Antigravity (AGY)**, and **Fireworks**.
+- **Multi-Agent Support**: Native rate-limit and token metrics for **Claude Code**, **OpenAI Codex**, **Antigravity (AGY)**, **Grok**, **Fireworks**, and **Kimi**.
 - **Fuel-Gauge Meters**: Real-time visualization of current session limits, 7-day allowances, and credit balances.
 - **Usage Breakdown**: Daily token bar charts and model breakdown with input/output/cache splits.
 - **Synced Aggregation**: Optional cross-device usage aggregation across laptop and desktop workstations.
@@ -46,8 +46,8 @@ Antigravity quota limits can be customized in `~/.config/omarchy/agents/agy.json
 }
 ```
 
-- `"both"` (default): Shows both **Gemini Models** (Session and Weekly) and **Claude & GPT models** limits.
-- `"gemini"`: Shows only **Gemini Models** quota limits.
+- `"both"` (default): Shows both **Gemini Models** (Session, Weekly, and Gemini 4 Argon) and **Claude & GPT models** limits.
+- `"gemini"`: Shows only **Gemini Models** and **Gemini 4 Argon** quota limits.
 - `"claude"`: Shows only **Claude & GPT models** quota limits.
 
 
