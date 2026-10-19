@@ -31,6 +31,121 @@ Panel {
   readonly property var provider: providers.length > 0 ? providers[providerIndex] : null
 
   property bool cursorActive: false
+  property bool configMode: false
+
+  readonly property string effectiveModuleName: {
+    if (root.bar && root.bar.moduleName) return root.bar.moduleName
+    if (root.bar && root.bar.pluginId) return root.bar.pluginId
+    return root.moduleName
+  }
+
+  readonly property var knownAgentMetadata: ({
+    "agy": { name: "Antigravity", description: "Google AI · Gemini 3.8/3.7, Argon, Claude/GPT quotas" },
+    "claude": { name: "Claude Code", description: "Anthropic · Session and weekly rate limits" },
+    "codex": { name: "OpenAI Codex", description: "OpenAI · Rate limits and subscription tracking" },
+    "grok": { name: "Grok", description: "xAI · Billing period credits and included usage" },
+    "fireworks": { name: "Fireworks", description: "Fireworks AI · Prepaid credit balance and token usage" },
+    "kimi": { name: "Kimi Code", description: "Moonshot AI · 5h, weekly, and monthly allowances" }
+  })
+
+  readonly property var availableAgents: {
+    var list = []
+    var seen = {}
+    var order = ["agy", "claude", "codex", "grok", "fireworks", "kimi"]
+    for (var i = 0; i < order.length; i++) {
+      var id = order[i]
+      seen[id] = true
+      list.push(agentMetaItem(id))
+    }
+    if (usage && usage.agentIds) {
+      for (var j = 0; j < usage.agentIds.length; j++) {
+        var dynId = usage.agentIds[j]
+        if (!seen[dynId]) {
+          seen[dynId] = true
+          list.push(agentMetaItem(dynId))
+        }
+      }
+    }
+    if (root.settings && root.settings.providers) {
+      for (var cfgId in root.settings.providers) {
+        if (!seen[cfgId]) {
+          seen[cfgId] = true
+          list.push(agentMetaItem(cfgId))
+        }
+      }
+    }
+    return list
+  }
+
+  function agentMetaItem(id) {
+    var meta = knownAgentMetadata[id]
+    var name = meta ? meta.name : id
+    var desc = meta ? meta.description : ""
+    if (usage && usage.agents) {
+      for (var i = 0; i < usage.agents.length; i++) {
+        var a = usage.agents[i]
+        if (a && a.agentId === id && a.record && a.record.providerName) {
+          name = a.record.providerName
+          break
+        }
+      }
+    }
+    return {
+      id: id,
+      name: name,
+      description: desc
+    }
+  }
+
+  function isProviderConfiguredEnabled(id) {
+    if (!root.settings || !root.settings.providers || root.settings.providers[id] === undefined) {
+      return true
+    }
+    return root.settings.providers[id].enabled !== false
+  }
+
+  function toggleProviderSetting(id) {
+    var currentlyEnabled = isProviderConfiguredEnabled(id)
+    var nextEnabled = !currentlyEnabled
+
+    var provs = {}
+    if (root.settings && root.settings.providers) {
+      for (var k in root.settings.providers) {
+        provs[k] = { enabled: root.settings.providers[k].enabled !== false }
+      }
+    }
+    var all = root.availableAgents
+    for (var i = 0; i < all.length; i++) {
+      var aid = all[i].id
+      if (provs[aid] === undefined) {
+        provs[aid] = { enabled: true }
+      }
+    }
+    provs[id] = { enabled: nextEnabled }
+
+    persistProviders(provs)
+  }
+
+  function persistProviders(providersObj) {
+    var entry = { id: root.effectiveModuleName }
+    for (var existing in root.settings) {
+      if (existing !== "id") entry[existing] = root.settings[existing]
+    }
+    entry.providers = providersObj
+
+    root.settings = entry
+    if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
+    if (usage && "settings" in usage) usage.settings = entry
+
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function") {
+      root.bar.shell.updateEntryInline(root.effectiveModuleName, entry)
+    }
+
+    if (root.bar && typeof root.bar.run === "function") {
+      var jsonArg = JSON.stringify(providersObj)
+      root.bar.run("omarchy bar set " + root.effectiveModuleName + " providers '" + jsonArg + "' --json")
+    }
+  }
 
   // Countdowns and "updated" read this instead of Date.now() so the
   // panel keeps telling the truth while it sits open.
@@ -343,25 +458,32 @@ Panel {
   // Marks resolve by convention, so a new agent's data file needs nothing
   // from this panel: assets/<id>.svg if it ships one, the module's bar glyph
   // if it doesn't.
-  function iconCandidatesForProvider(p, surfaceColor) {
-    if (!p) return []
+  function iconCandidatesForId(agentId, surfaceColor) {
+    if (!agentId) return []
     var candidates = []
     if (colorLuminance(surfaceColor || Color.background) >= 0.5)
-      candidates.push(Qt.resolvedUrl("assets/" + p.providerId + "-light.svg"))
-    candidates.push(Qt.resolvedUrl("assets/" + p.providerId + ".svg"))
+      candidates.push(Qt.resolvedUrl("assets/" + agentId + "-light.svg"))
+    candidates.push(Qt.resolvedUrl("assets/" + agentId + ".svg"))
     return candidates
+  }
+
+  function iconCandidatesForProvider(p, surfaceColor) {
+    if (!p) return []
+    return iconCandidatesForId(p.providerId, surfaceColor)
   }
 
   // Nothing to report, nothing in the bar: Bar.qml collapses a slot whose item
   // is invisible, so the icon appears the moment the first scan finds usage and
   // stays away entirely on a machine that has never run either CLI.
-  visible: providers.length > 0
+  visible: providers.length > 0 || root.opened || root.configMode
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   onProviderIndexChanged: if (panelFlick) panelFlick.contentY = 0
+  onConfigModeChanged: if (panelFlick) panelFlick.contentY = 0
   onOpenedChanged: if (opened) {
     cursorActive = false
+    configMode = false
     nowMs = Date.now()
     if (panelFlick) panelFlick.contentY = 0
     usage.refreshLimits()
@@ -389,6 +511,7 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
+    function config(): string { root.configMode = true; root.open(); return "ok" }
     function refresh(): string { root.refreshNow(); return "ok" }
     function next(): string { root.selectProvider(root.providerIndex + 1); return "ok" }
   }
@@ -423,7 +546,7 @@ Panel {
       anchors.fill: parent
 
       onMoveRequested: function(dx, dy) {
-        if (dx !== 0) {
+        if (dx !== 0 && !root.configMode) {
           root.cursorActive = true
           root.selectProvider(root.providerIndex + dx)
         }
@@ -432,9 +555,21 @@ Panel {
                                            Math.max(0, panelFlick.contentHeight - panelFlick.height))
       }
       onActivateRequested: root.refreshNow()
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.configMode) {
+          root.configMode = false
+        } else {
+          root.close()
+        }
+      }
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) { if (t === "r" || t === "R") root.refreshNow() }
+      onTextKey: function(t) {
+        if (t === "c" || t === "C" || t === "s" || t === "S") {
+          root.configMode = !root.configMode
+        } else if (t === "r" || t === "R") {
+          root.refreshNow()
+        }
+      }
 
       Flickable {
         id: panelFlick
@@ -455,17 +590,17 @@ Panel {
           // ---------- Hero: provider mark · name · plan ----------
           PanelHero {
             id: hero
-            visible: !!root.provider
+            visible: !!root.provider || root.configMode
             width: parent.width
-            title: root.provider ? root.provider.providerName : ""
-            meta: root.heroMeta(root.provider)
+            title: root.configMode ? "Visible Agents" : (root.provider ? root.provider.providerName : "")
+            meta: root.configMode ? "TOGGLE AGENTS IN BAR & DASHBOARD" : root.heroMeta(root.provider)
             foreground: root.foreground
             fontFamily: root.fontFamily
 
             iconComponent: Component {
               Item {
                 id: heroMark
-                property var candidates: root.iconCandidatesForProvider(root.provider, root.surface)
+                property var candidates: root.configMode ? [] : root.iconCandidatesForProvider(root.provider, root.surface)
                 // Provider objects are rebuilt on every refresh, which churns the
                 // array's identity without changing its content. Restart the fallback
                 // walk only when the URLs change: re-pointing source at a URL whose
@@ -480,6 +615,7 @@ Panel {
 
                 Image {
                   id: heroMarkImage
+                  visible: !root.configMode
                   anchors.fill: parent
                   source: heroMark.candidateIndex < heroMark.candidates.length ? heroMark.candidates[heroMark.candidateIndex] : ""
                   sourceSize.width: Style.font.display * 2
@@ -493,32 +629,197 @@ Panel {
 
                 Text {
                   anchors.centerIn: parent
-                  visible: heroMarkImage.status !== Image.Ready
-                  text: button.text
+                  visible: root.configMode || heroMarkImage.status !== Image.Ready
+                  text: root.configMode ? "󰒓" : button.text
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.display
                 }
               }
             }
+
+            trailingControl: Component {
+              Row {
+                spacing: Style.space(6)
+
+                HeroButton {
+                  visible: !root.configMode
+                  glyph: "󰞷"
+                  tooltip: "Launch agent..."
+                  onClicked: root.launchAgent()
+                }
+
+                HeroButton {
+                  glyph: root.configMode ? "󰅖" : "󰒓"
+                  tooltip: root.configMode ? "Back to dashboard" : "Configure visible agents"
+                  onClicked: root.configMode = !root.configMode
+                }
+              }
+            }
           }
 
-          Text {
-            visible: root.providers.length === 0
+          Column {
+            visible: root.providers.length === 0 && !root.configMode
             width: parent.width
+            spacing: Style.space(16)
             topPadding: Style.space(24)
-            text: "No AI coding subscriptions found.\nAgents show up here once you've used them."
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+
+            Text {
+              width: parent.width
+              text: "No active agents visible.\nAll agents are either disabled or haven't been used yet."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
+
+            Button {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "Configure Visible Agents"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: root.configMode = true
+            }
           }
+
+          // ---------- Config section: Visible Agents with Toggles ----------
+          Column {
+            id: configSection
+            visible: root.configMode
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSectionHeader {
+              width: parent.width
+              text: "AVAILABLE AGENTS"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Repeater {
+              model: root.availableAgents
+
+              BorderSurface {
+                id: agentRow
+                required property var modelData
+                required property int index
+
+                readonly property string agentId: modelData.id
+                readonly property bool isEnabled: root.isProviderConfiguredEnabled(agentId)
+
+                width: configSection.width
+                implicitHeight: Math.max(Style.space(52), rowContent.implicitHeight + Style.space(16))
+                radius: Style.cornerRadius
+                color: Style.controlFill(false, rowMouse.containsMouse, root.foreground, Color.accent)
+                borderSpec: Border.controlSpec(rowMouse.containsMouse ? "hover-cursor" : "normal", root.foreground, Color.accent)
+
+                Row {
+                  id: rowContent
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  anchors.leftMargin: Style.space(12)
+                  anchors.rightMargin: Style.space(12)
+                  spacing: Style.space(12)
+
+                  Item {
+                    width: Style.space(26)
+                    height: Style.space(26)
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Image {
+                      id: rowIconImage
+                      anchors.fill: parent
+                      property var candidates: root.iconCandidatesForId(agentRow.agentId, root.surface)
+                      property int candidateIndex: 0
+                      source: candidateIndex < candidates.length ? candidates[candidateIndex] : ""
+                      sourceSize.width: Style.space(52)
+                      sourceSize.height: Style.space(52)
+                      fillMode: Image.PreserveAspectFit
+                      opacity: agentRow.isEnabled ? 1.0 : 0.4
+                      onStatusChanged: if (status === Image.Error && candidateIndex < candidates.length)
+                        Qt.callLater(function() { candidateIndex++ })
+                    }
+
+                    Text {
+                      anchors.centerIn: parent
+                      visible: rowIconImage.status !== Image.Ready
+                      text: "󱚣"
+                      color: agentRow.isEnabled ? root.foreground : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.heading
+                    }
+                  }
+
+                  Column {
+                    width: parent.width - Style.space(26) - switchLoader.width - parent.spacing * 2
+                    spacing: Style.space(2)
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Text {
+                      text: modelData.name
+                      color: agentRow.isEnabled ? root.foreground : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                      elide: Text.ElideRight
+                      width: parent.width
+                    }
+
+                    Text {
+                      visible: modelData.description !== ""
+                      text: modelData.description
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                      width: parent.width
+                    }
+                  }
+
+                  ToggleSwitch {
+                    id: switchLoader
+                    checked: agentRow.isEnabled
+                    interactive: false
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+
+                MouseArea {
+                  id: rowMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleProviderSetting(agentRow.agentId)
+                }
+              }
+            }
+
+            Item {
+              width: parent.width
+              height: Style.space(6)
+            }
+
+            Button {
+              width: parent.width
+              text: "Done"
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.spacing.controlPaddingY
+              onClicked: root.configMode = false
+            }
+          }
+
 
           // ---------- Provider switch ----------
           Row {
             id: providerSwitch
-            visible: root.providers.length > 1
+            visible: !root.configMode && root.providers.length > 1
             width: parent.width
             spacing: Style.spacing.md
 
@@ -553,7 +854,7 @@ Panel {
 
           // ---------- Status ----------
           BorderSurface {
-            visible: !!root.provider && String(root.provider.usageStatusText || "") !== ""
+            visible: !root.configMode && !!root.provider && String(root.provider.usageStatusText || "") !== ""
             width: parent.width
             implicitHeight: statusText.implicitHeight + Style.spacing.xl * 2
             color: root.alpha(root.urgent, 0.10)
@@ -577,13 +878,13 @@ Panel {
 
           // ---------- Balance / limits ----------
           PanelSeparator {
-            visible: balanceSection.visible || limitsSection.visible
+            visible: !root.configMode && (balanceSection.visible || limitsSection.visible)
             foreground: root.foreground
           }
 
           Column {
             id: balanceSection
-            visible: !!root.balance
+            visible: !root.configMode && !!root.balance
             width: parent.width
             spacing: Style.space(10)
 
@@ -644,7 +945,7 @@ Panel {
 
           Column {
             id: limitsSection
-            visible: root.rawLimits.length > 0
+            visible: !root.configMode && root.rawLimits.length > 0
             width: parent.width
             spacing: Style.space(10)
 
@@ -704,13 +1005,13 @@ Panel {
 
           // ---------- Usage ----------
           PanelSeparator {
-            visible: usageSection.visible
+            visible: !root.configMode && usageSection.visible
             foreground: root.foreground
           }
 
           Column {
             id: usageSection
-            visible: !!root.provider && root.provider.recentDays && root.provider.recentDays.length > 0
+            visible: !root.configMode && !!root.provider && root.provider.recentDays && root.provider.recentDays.length > 0
             width: parent.width
             spacing: Style.spacing.md
 
@@ -743,13 +1044,13 @@ Panel {
 
           // ---------- Models ----------
           PanelSeparator {
-            visible: modelSection.visible
+            visible: !root.configMode && modelSection.visible
             foreground: root.foreground
           }
 
           Column {
             id: modelSection
-            visible: root.models.length > 0
+            visible: !root.configMode && root.models.length > 0
             width: parent.width
             spacing: Style.spacing.md
 
@@ -775,7 +1076,7 @@ Panel {
           }
 
           Text {
-            visible: text !== ""
+            visible: !root.configMode && text !== ""
             width: parent.width
             topPadding: Style.space(2)
             text: root.footerText()
@@ -1019,6 +1320,46 @@ Panel {
     PanelToolTip {
       visible: modelHover.containsMouse
       text: root.modelTooltip(modelRow.row)
+      fontFamily: root.fontFamily
+    }
+  }
+
+  // The tinted square in the hero's corner: launch an agent, configure visible agents.
+  component HeroButton: Rectangle {
+    id: heroButton
+    signal clicked()
+    signal hovered()
+    property string glyph: ""
+    property string tooltip: ""
+    property bool hasCursor: false
+    implicitWidth: Style.space(34)
+    implicitHeight: implicitWidth
+    radius: Style.cornerRadius
+    color: root.alpha(Color.accent, hasCursor ? 0.3 : 0.12)
+    border.width: hasCursor ? Math.max(1, Style.hoverBorderWidth) : 0
+    border.color: Color.accent
+
+    Text {
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: heroButton.glyph
+      color: Color.accent
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.heading
+    }
+
+    MouseArea {
+      id: heroMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: heroButton.hovered()
+      onClicked: heroButton.clicked()
+    }
+
+    PanelToolTip {
+      visible: heroMouse.containsMouse
+      text: heroButton.tooltip
       fontFamily: root.fontFamily
     }
   }
